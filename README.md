@@ -1,22 +1,27 @@
 # 🛒 Pipeline de Engenharia de Dados: E-Commerce Medallion Architecture com Apache Spark
 
 ## 📝 Descrição do Projeto
-Este projeto simula o ambiente de engenharia de dados de uma empresa real de e-commerce utilizando o dataset público da **Olist** (plataforma de e-commerce brasileira). O objetivo principal é construir um pipeline de dados robusto de ponta a ponta, coletando dados brutos e transformando-os em tabelas de alto valor analítico para tomadas de decisão estratégicas.
+Desenvolvi este projeto com o objetivo de simular o ecossistema de dados e o pipeline analítico de uma empresa real de e-commerce. Para isso, utilizei o dataset público da **Olist** (uma grande plataforma de e-commerce brasileira), que contém informações reais de clientes, pedidos e itens vendidos.
 
-O projeto foi desenvolvido inteiramente dentro do ecossistema **Databricks (Serverless)**, utilizando o **Apache Spark** (via APIs PySpark e Spark SQL) como motor de processamento distribuído e o **Delta Lake** para garantir transações ACID.
+O objetivo principal foi construir uma esteira de dados ponta a ponta dentro do ecossistema **Databricks**, utilizando o **Apache Spark** (via APIs PySpark e Spark SQL) como motor de processamento distribuído e o formato **Delta Lake** para garantir a confiabilidade e transações ACID no nosso repositório.
 
 ---
 
 ## 🏗️ Arquitetura do Projeto (Medallion Architecture)
 
-O pipeline segue o padrão de medalhão para garantir a qualidade, governança e organização dos dados dentro do Data Lakehouse:
+O pipeline foi estruturado seguindo o padrão de mercado da Arquitetura Medallion para garantir governança, organização e qualidade dos dados:
 
+1. **Landing Zone (Data Lake / Volumes):** Como utilizei a versão Free (Serverless) do Databricks, simulei o nosso Data Lake corporativo criando um **Volume no Unity Catalog**. É aqui que os arquivos originais em `.csv` extraídos do Kaggle foram armazenados inicialmente.
+2. **Camada Bronze (Dados Brutos):** Criei um notebook em PySpark para ler os CSVs do Volume e persistí-los imediatamente como tabelas Delta Lake, garantindo o armazenamento do histórico original sem nenhuma alteração estrutural.
+3. **Camada Silver (Dados Higienizados):** Utilizando PySpark, apliquei regras severas de higienização, tratamento de nulos em chaves primárias, deduplicação de registros e padronização de campos de texto.
+4. **Camada Gold (Tabelas de Negócio):** Mudei a abordagem para o Spark SQL para cruzar as tabelas limpas da Silver e gerar agregados de alto valor para tomadas de decisão analíticas.
 
+---
 
-1. **Landing Zone (Data Lake / Volumes):** Armazenamento dos arquivos originais (`.csv`) extraídos do Kaggle em uma área de staging isolada no Unity Catalog.
-2. **Camada Bronze (Dados Brutos):** Leitura dos arquivos CSV via Spark e persistência imediata no formato Delta Lake, mantendo o histórico original sem nenhuma alteração estrutural.
-3. **Camada Silver (Dados Higienizados):** Limpeza de dados, padronização de strings, eliminação de duplicidades e correção da tipagem de dados (ex: conversão de strings para Timestamps).
-4. **Camada Gold (Tabelas de Negócio):** Cruzamento das tabelas estruturadas via Spark SQL utilizando agregações avançadas e Window Functions para responder a dores reais de negócio.
+## 🧠 Desafios Encontrados e Soluções Práticas
+* **Manipulação de Infraestrutura Limitada:** Por estar em um ambiente de estudos gratuito (Serverless), não dispunha de storages externos como AWS S3 ou Azure ADLS. Contornei o problema mapeando caminhos físicos via **Volumes do Unity Catalog** (`/Volumes/workspace/default/...`), replicando com sucesso a estrutura de pastas de uma empresa real.
+* **Tipagem de Datas em Larga Escala:** Os arquivos originais traziam todas as colunas de data (como momentos de compra, aprovação e entrega) formatadas como texto (String). Na camada Silver, utilizei funções nativas do Spark (`to_timestamp`) para convertê-las nos tipos corretos, permitindo cálculos de intervalo de tempo precisos na camada seguinte.
+* **Garantia de Unicidade:** Identifiquei registros duplicados de pedidos na carga bruta. Utilizei o método `.dropDuplicates(["order_id"])` do PySpark para limpar a massa de dados antes que ela chegasse aos relatórios finais.
 
 ---
 
@@ -33,31 +38,18 @@ O pipeline segue o padrão de medalhão para garantir a qualidade, governança e
 
 ### 📍 1. Ingestão (`01_ingestion_bronze`)
 * **Linguagem:** PySpark
-* **Objetivo:** Lê as tabelas de Clientes, Pedidos e Itens dos Pedidos diretamente do Volume corporativo e realiza o parse inicial com `inferSchema`. Os DataFrames resultantes são salvos como tabelas Delta Lake com a estratégia de overwrite.
+* Realiza a leitura estruturada dos arquivos CSV (`olist_customers_dataset.csv`, `olist_orders_dataset.csv` e `olist_order_items_dataset.csv`) e faz a carga inicial na camada `bronze_` em formato Delta.
 
 ### 📍 2. Transformação e Qualidade (`02_transform_silver`)
 * **Linguagem:** PySpark
-* **Objetivo:** Aplicação de regras de higienização de dados:
-  * Remoção de registros nulos em chaves primárias usando `.dropna()`.
-  * Padronização de strings (Cidades e Estados) com `upper()` e `trim()`.
-  * Conversão de tipos de dados textuais para `Timestamp` real (`to_timestamp()`).
-  * Deduplicação de registros de vendas através de `.dropDuplicates()`.
+* Executa o tratamento de dados: remoção de nulos críticos via `.dropna()`, padronização de strings de localização com `upper()` e `trim()`, e a conversão de strings de data para timestamps reais. Salva os dados limpos nas tabelas `silver_`.
 
 ### 📍 3. Modelagem e Indicadores (`03_analytics_gold`)
 * **Linguagem:** Spark SQL
-* **Objetivo:** Cruzamento dos dados limpos para disponibilização de indicadores estratégicos:
-  * `gold_faturamento_mensal`: Consolidação de receita de produtos, fretes e volume de pedidos agrupados por mês/ano.
-  * `gold_performance_logistica`: Cálculo de tempo médio real de entrega por estado e análise de desvios operacionais.
-  * `gold_ranking_clientes`: Identificação e classificação dos 10 clientes com maior volume financeiro de compras utilizando funções de janela (`DENSE_RANK`).
+* Consome a camada Silver para estruturar três visões de negócio fundamentais na camada Gold:
+  * `gold_faturamento_mensal`: Consolidação histórica de receita de produtos, custos de frete e volume de pedidos por mês/ano.
+  * `gold_performance_logistica`: Cálculo do tempo médio real de entrega por estado e desvio em relação à estimativa passada ao cliente.
+  * `gold_ranking_clientes`: Identificação dos 10 clientes com maior volume financeiro acumulado em compras utilizando funções de janela (`DENSE_RANK`).
 
 ---
-
-## 📈 Próximos Passos (Roadmap de Produção)
-Para aproximar este projeto de um cenário real de produção corporativa, as próximas etapas de evolução envolvem:
-* [ ] **Orquestração:** Agendamento e monitoramento do pipeline ponta a ponta utilizando o **Databricks Workflows (Jobs)**.
-* [ ] **Ingestão Incremental:** Substituição da carga total pelo **Apache Spark Auto Loader** (`cloudFiles`) para processar apenas arquivos novos.
-* [ ] **CI/CD:** Vinculação do ambiente de desenvolvimento diretamente ao GitHub utilizando o **Databricks Git Folders**.
-
----
-*Projeto desenvolvido como parte dos estudos práticos em Engenharia de Dados e Big Data.*
-
+*Projeto finalizado com sucesso, servindo como base sólida para estudos de processamento distribuído de dados e arquitetura Lakehouse.*
